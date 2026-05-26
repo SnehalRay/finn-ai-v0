@@ -2,6 +2,10 @@
 
 Finn is an AI-powered wellness companion built for the fini health app. Ask Finn anything about nutrition, hydration, sleep, exercise, or mental wellbeing and get grounded, evidence-based responses — powered entirely by local, open-source models.
 
+<img width="960" height="541" alt="706100172_1385192720337516_7059350457048227557_n" src="https://github.com/user-attachments/assets/405e6df1-c37a-4043-b41a-9f6286f28f64" />
+
+<img width="1268" height="1576" alt="703178472_2763227044051363_5868500675085696709_n" src="https://github.com/user-attachments/assets/8a112bb1-5b9f-4b2f-a6bd-7374affeb5f2" />
+
 ---
 
 ## Prerequisites
