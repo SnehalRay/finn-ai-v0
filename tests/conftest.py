@@ -15,6 +15,16 @@ class MockLLMAdapter(LLMAdapter):
         return self._response
 
 
+class SequentialMockLLMAdapter(LLMAdapter):
+    """Returns responses in sequence — for testing multi-call paths (e.g. classify + dynamic response)."""
+
+    def __init__(self, responses: list[str]):
+        self._responses = iter(responses)
+
+    async def complete(self, system: str, messages: list[dict], max_tokens: int = 512) -> str:
+        return next(self._responses, "WELLNESS")
+
+
 @pytest.fixture
 def mock_llm():
     return MockLLMAdapter(response="WELLNESS")

@@ -1,6 +1,6 @@
 import pytest
 from app.agent.guardrails import classify, GuardrailResult
-from tests.conftest import MockLLMAdapter
+from tests.conftest import MockLLMAdapter, SequentialMockLLMAdapter
 
 
 # ---------- helpers ----------
@@ -52,7 +52,14 @@ async def test_medical_response_redirects_to_provider():
 
 @pytest.mark.asyncio
 async def test_other_response_mentions_wellness_topics():
-    result = await classify("what stocks should I buy?", make_llm("OTHER"))
+    # classify() makes two LLM calls for OTHER: one to categorise, one for the
+    # dynamic redirect response. Use SequentialMockLLMAdapter so the second
+    # call returns a realistic wellness-redirect string.
+    llm = SequentialMockLLMAdapter([
+        "OTHER",
+        "That's outside my area, but I specialise in wellness topics like nutrition, sleep, and exercise — happy to help there!",
+    ])
+    result = await classify("what stocks should I buy?", llm)
     assert result.should_block is True
     assert "wellness" in result.response.lower()
 
