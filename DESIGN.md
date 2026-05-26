@@ -167,27 +167,123 @@ Empirically tuned. At 0.5, semantically related queries like "I feel anxious all
 
 ## v0 → v1+ Scaling Path
 
-| Layer | v0 | v1+ |
-|---|---|---|
-| LLM | Ollama (local llama3.2) | Swap `LLMAdapter` for Claude / GPT-4o; add model routing by query type |
-| Vector store | ChromaDB (single node) | Pinecone or Weaviate (managed, horizontal scale) |
-| Session storage | SQLite | Postgres with connection pooling (pgBouncer) |
-| Auth | None | OAuth2 / JWT; `user_id` becomes a verified claim, not a free parameter |
-| Rate limiting | None | Redis token bucket per `user_id`; FastAPI middleware |
-| PII | Regex scrubbing | Microsoft Presidio or AWS Comprehend Medical for comprehensive detection |
-| Knowledge base | Static CSV + seed file | Admin UI for curators; versioned KB with ingest pipeline |
-| Observability | Stdout logs | Structured JSON logging → OpenTelemetry → Grafana |
+The current stack is a single-machine pipeline where every layer is a sequential bottleneck:
 
-### Future extensibility: `UserContextProvider`
+```
+Request → FastAPI (1 instance) → Ollama (1 thread) → ChromaDB (1 node) → SQLite (1 writer)
+```
 
-The agent loop has a clean injection point for wearable / health app data. A `UserContextProvider` interface would be called between history load and prompt build:
+The sections below address each layer in order of impact.
+
+---
+
+### 1. LLM Layer — the primary bottleneck
+
+Ollama with llama3.2 processes one request at a time on CPU. Under any real concurrent load this becomes the queue.
+
+**Cloud LLM swap** — the `LLMAdapter` ABC already isolates this. Swapping to Claude, GPT-4o, or Gemini is one new class with no changes to the agent loop, guardrails, or RAG. Cost per request, but scales to any throughput.
+
+**Model tiering** — the guardrails classifier calls the LLM on every message but only needs one word back (`WELLNESS`, `MEDICAL`, etc.). Use a cheap, fast model (e.g. Haiku, Flash) for classification and a smarter model for response generation. This cuts LLM cost by ~60% at scale with no quality loss on generation.
+
+**Response streaming** — switch from request-response to SSE or WebSocket so users see tokens appear in real time. No change to throughput, but perceived latency drops dramatically. FastAPI natively supports `StreamingResponse`.
+
+**GPU serving** — if staying local, serving Ollama on a GPU instance gives 10-20x throughput over CPU at modest cost.
+
+---
+
+### 2. Vector Store — ChromaDB is single-node
+
+**Managed vector DB** — migrate to Pinecone, Weaviate, or Qdrant. All support horizontal scaling, namespaces (for multi-tenant KB isolation), and metadata filtering. The `VectorStore` wrapper in `app/rag/vector_store.py` isolates the ChromaDB dependency — replacing it is a class swap.
+
+**pgvector** — if the rest of the stack moves to Postgres, `pgvector` keeps the vector store co-located with session storage, reducing operational overhead.
+
+**RAG quality improvements:**
+- **Hybrid search** — combine BM25 (keyword/sparse) with dense embeddings. Dense retrieval misses exact term matches; BM25 catches them. Union results and re-rank.
+- **Cross-encoder re-ranking** — retrieve top-20, score with a cross-encoder, return top-5. Meaningful quality jump for short or ambiguous queries.
+- **Feedback loop** — log which retrieved chunks appear in responses users engage with. Use this signal to fine-tune retrieval over time.
+
+---
+
+### 3. Session Storage — SQLite cannot scale writes
+
+**Postgres** — the schema and queries are standard SQL. Migration is a connection-string change and a driver swap (`asyncpg`). Add **pgBouncer** for connection pooling — FastAPI coroutines each want a DB connection; without pooling you exhaust the limit quickly.
+
+**Redis hot cache** — conversation history is read on every turn. Cache active sessions in Redis (write-through to Postgres). At steady load this cuts DB reads by ~80-90%.
+
+**Message archival** — partition the `messages` table by time range and archive old conversations to cold storage (S3 + Athena for ad hoc queries). Active storage stays small.
+
+---
+
+### 4. API Layer — horizontal scaling
+
+The agent loop is already stateless — all state lives in the DB. This means N API instances can run behind a load balancer with no code changes.
+
+```
+                    ALB / nginx
+                   /     |     \
+              API-1    API-2    API-3
+                   \     |     /
+               Postgres + Redis + Vector Store
+```
+
+Add an **API Gateway** in front for: rate limiting per `user_id`, TLS termination, JWT validation, and request logging. FastAPI middleware handles rate limiting if you're not using a gateway.
+
+---
+
+### 5. Auth — currently absent
+
+`user_id` is a free string the client supplies — any caller can impersonate any user. For a real product:
+
+- **JWT / OAuth2** — `user_id` becomes a verified claim in a signed token, not a client-supplied parameter.
+- **Short-lived tokens** — rotated on each session, stored server-side, revocable.
+
+Auth also unblocks user-level rate limiting, GDPR deletion requests, and per-user personalization.
+
+---
+
+### 6. Personalization — the product moat
+
+Finn currently knows nothing about a user beyond the last 6 messages. A health app can build a durable advantage here by injecting user context between history load and prompt build:
 
 ```python
 class UserContextProvider(Protocol):
     async def get_context(self, user_id: str) -> dict: ...
 ```
 
-Implementations could pull from Apple Health, Fitbit, or fini's own health data store. The agent injects this as a second context block in the system prompt — no changes needed to guardrails, RAG, or the LLM adapter. The agent loop does not need to know where the data came from.
+Implementations:
+- **Wearable data** — Apple Health, Fitbit, Oura: sleep hours, HRV, step count. Finn can say "you only slept 5 hours last night — here's what that does to your focus" instead of giving generic advice.
+- **User profile** — dietary preferences, fitness level, health goals collected at onboarding.
+- **Long-term memory** — summarise past conversations into a persistent profile so Finn remembers context across sessions ("this user is training for a 5K", "has a dairy intolerance").
+
+This slot is already designed into the agent loop — no changes needed to guardrails, RAG, or the LLM adapter.
+
+---
+
+### 7. Observability — invisible right now
+
+Without instrumentation you cannot debug performance or quality at scale:
+
+- **Structured logging** — every request logs `session_id`, `user_id`, per-stage latency (guardrails, RAG, LLM), `sources_used`, `blocked`. JSON format for log aggregation (Datadog, ELK).
+- **OpenTelemetry traces** — distributed trace through the full pipeline; see exactly where latency lives per request.
+- **LLM quality metrics** — guardrail false positive rate (wellness messages incorrectly blocked), RAG hit rate, session depth (do users send more than 2 messages?), response rating if you add thumbs up/down.
+
+---
+
+### Scale milestones
+
+| Traffic | What breaks first | Fix |
+|---|---|---|
+| ~10 concurrent users | Ollama queue depth | Cloud LLM or GPU |
+| ~100 req/s | SQLite write lock | Postgres + Redis |
+| ~1,000 req/s | Single API instance | Horizontal scale + load balancer |
+| Multi-tenant / B2B | Shared KB, no auth | Per-org KB namespaces, JWT, RBAC |
+| Real personalisation | 6-message memory limit | User profiles + wearable context via `UserContextProvider` |
+
+---
+
+### What doesn't change
+
+The `LLMAdapter` ABC, the stateless agent loop, and the `UserContextProvider` seam mean most upgrades above are **additive** — you swap an implementation class or add a new one. The agent orchestration in `finn.py`, the guardrails classifier, the RAG retriever, and the prompt builder stay the same across all scale tiers.
 
 ---
 
