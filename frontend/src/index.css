@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=Raleway:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-heading: 'Lora', Georgia, serif;
+  --font-body: 'Raleway', system-ui, sans-serif;
+
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-elevated: #1c2128;
+  --color-border: #30363d;
+
+  --color-teal: #3dd6c8;
+  --color-teal-dim: #2ba99e;
+  --color-teal-muted: rgba(61, 214, 200, 0.12);
+
+  --color-text-primary: #e6edf3;
+  --color-text-muted: #8b949e;
+  --color-text-subtle: #6e7681;
+
+  --color-amber: #f59e0b;
+  --color-amber-bg: rgba(245, 158, 11, 0.08);
+  --color-amber-border: rgba(245, 158, 11, 0.35);
+
+  --color-user-bubble: #1a3d5c;
+  --color-user-bubble-border: rgba(61, 214, 200, 0.2);
+  --color-finn-bubble: #1e2533;
+
+  --radius-bubble: 1.25rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 99px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+chroma_db/
+finn.db
+.DS_Store
+*.log
+.claude/
