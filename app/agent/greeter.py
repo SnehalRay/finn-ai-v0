@@ -15,52 +15,58 @@ _SOCIAL_CLASSIFIER_SYSTEM = """You are a classifier for a wellness chatbot calle
 Classify the user's message into one of three categories: GREETING, FAREWELL, or CONTINUE.
 
 ---
-GREETING — opening the conversation or asking about Finn. No wellness content yet.
+GREETING — purely opening the conversation, no personal info or wellness content.
 Examples:
   "hi" → GREETING
-  "hello there" → GREETING
-  "hey, what's up?" → GREETING
+  "hello" → GREETING
+  "hey there" → GREETING
+  "good morning" → GREETING
   "who are you?" → GREETING
-  "what can you help me with?" → GREETING
-  "good morning!" → GREETING
+  "what can you help with?" → GREETING
 
 ---
-FAREWELL — wrapping up, acknowledging, or reacting with no new question.
-This includes short positive reactions, confirmations, and sign-offs.
+FAREWELL — ONLY these: a pure sign-off or a standalone one/two-word positive reaction
+with absolutely no personal information, emotion, or wellness content.
 Examples:
   "bye" → FAREWELL
   "thanks" → FAREWELL
-  "ok" → FAREWELL
+  "ok thanks" → FAREWELL
   "cool" → FAREWELL
-  "perfect" → FAREWELL
-  "alright" → FAREWELL
   "got it" → FAREWELL
-  "i see" → FAREWELL
-  "alright i see" → FAREWELL
-  "that makes sense" → FAREWELL
-  "good to know" → FAREWELL
-  "that helps, thanks" → FAREWELL
-  "makes sense!" → FAREWELL
-  "awesome" → FAREWELL
+  "perfect" → FAREWELL
   "noted" → FAREWELL
   "sounds good" → FAREWELL
-  "ok thank you" → FAREWELL
-  "see you later" → FAREWELL
+  "see ya" → FAREWELL
+
+NOT farewell — send these to CONTINUE:
+  "I am doing good" → CONTINUE  (personal update about how they feel)
+  "im good" → CONTINUE  (personal state, even without apostrophe)
+  "i'm fine" → CONTINUE  (personal state)
+  "not bad" → CONTINUE  (personal state)
+  "my mind is foggy" → CONTINUE  (personal wellness complaint)
+  "huh" → CONTINUE  (confusion — needs engagement)
+  "what?" → CONTINUE  (confusion — needs engagement)
+  "yeah" → CONTINUE  (conversational affirmation — continues the dialogue)
+  "yep" → CONTINUE  (conversational affirmation)
+  "yup" → CONTINUE  (conversational affirmation)
+  "nah" → CONTINUE  (conversational negation — continues the dialogue)
+  "nope" → CONTINUE  (conversational negation)
+  "I feel tired" → CONTINUE  (personal feeling)
+  "not great" → CONTINUE  (personal state)
+  "ok but what about sleep?" → CONTINUE  (has new content)
 
 ---
-CONTINUE — the message contains actual content that needs a response.
-Examples:
-  "how much water should I drink?" → CONTINUE
-  "I've been feeling really anxious lately" → CONTINUE
-  "what foods give me energy?" → CONTINUE
-  "I can't sleep" → CONTINUE
-  "I was diagnosed with anxiety" → CONTINUE
-  "perfect, now tell me about sleep" → CONTINUE  ← has a follow-up question
-  "ok but what about exercise?" → CONTINUE  ← has new content after the filler
+CONTINUE — everything else. When in doubt, always choose CONTINUE.
+This includes:
+  - Any message that mentions how someone feels or their personal state
+  - Any wellness question or topic
+  - Any expression of confusion ("huh?", "what?", "I don't understand")
+  - Any message with emotional content, even if short
+  - Anything ambiguous
 
 ---
-Key rule: if the message is ONLY a reaction/filler with no new question or topic, it is FAREWELL.
-If it contains a question or new topic (even after a filler word), it is CONTINUE.
+Critical rule: If the message contains ANY personal information, emotion, or body/mind state,
+it is ALWAYS CONTINUE — even if it's short or positive ("I am doing good", "feeling fine").
 
 Reply with ONLY one word: GREETING, FAREWELL, or CONTINUE."""
 
@@ -92,6 +98,8 @@ class GreetingResult:
 # Everything else goes through the LLM classifier.
 _FAREWELL_TOKENS = {"bye", "goodbye", "cya", "later", "thanks", "thx", "ty", "got it", "gotcha"}
 _GREETING_TOKENS = {"hi", "hey", "hello", "howdy", "hiya"}
+# Affirmations/negations always continue the conversation — never sign-offs
+_CONTINUE_TOKENS = {"yeah", "yep", "yup", "nah", "nope", "yes", "no", "sure", "maybe"}
 
 
 async def check_greeting(message: str, llm: LLMAdapter) -> GreetingResult:
@@ -102,6 +110,8 @@ async def check_greeting(message: str, llm: LLMAdapter) -> GreetingResult:
         return GreetingResult(category="GREETING", is_social=True, response=_GREETING_RESPONSE)
     if normalised in _FAREWELL_TOKENS:
         return GreetingResult(category="FAREWELL", is_social=True, response=_FAREWELL_RESPONSE)
+    if normalised in _CONTINUE_TOKENS:
+        return GreetingResult(category="CONTINUE", is_social=False, response=None)
 
     # LLM classifier for longer / ambiguous messages
     raw = await llm.complete(
