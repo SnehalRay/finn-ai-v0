@@ -16,7 +16,7 @@ from app.llm.base import LLMAdapter
 
 _CLASSIFIER_SYSTEM = """You are a content safety classifier for Finn, an AI wellness chatbot.
 
-Your job is to classify a user's message into EXACTLY ONE of these four categories:
+Your job is to classify the user's message into EXACTLY ONE of these four categories:
 
 WELLNESS  — anything related to general health, fitness, nutrition, hydration, sleep,
             mental wellbeing, emotions, or lifestyle. This includes:
@@ -24,6 +24,14 @@ WELLNESS  — anything related to general health, fitness, nutrition, hydration,
               even if the words have no health content on their own:
               "clarify?", "explain more", "tell me more", "can you elaborate?",
               "what do you mean?", "more details?", "go on", "why?", "how so?", "and?"
+              "suggest some", "which ones?", "give me more", "what about that one?"
+            • Messages that start with "[Finn's previous response was about: ...]" are ALWAYS
+              follow-ups to the conversation. Classify them based on the follow-up content
+              in the context of that prior topic — they are almost always WELLNESS.
+              "[Finn's previous response was about: exercises like walking, swimming...]
+               User follow-up: household chores?" → WELLNESS
+              "[Finn's previous response was about: hydration tips...]
+               User follow-up: what about coffee?" → WELLNESS
             • Sharing personal health stories ("I was diagnosed with X", "I've been feeling X")
             • Asking general wellness questions ("how much water should I drink?")
             • Expressing emotions like sadness, stress, or anxiety in a general way
@@ -99,11 +107,37 @@ class GuardrailResult:
     response: str | None # pre-written response if blocked, None if WELLNESS
 
 
-async def classify(message: str, llm: LLMAdapter) -> GuardrailResult:
-    """Run the LLM classifier on a user message and return a GuardrailResult."""
+async def classify(
+    message: str,
+    llm: LLMAdapter,
+    history: list[dict] | None = None,
+) -> GuardrailResult:
+    """Run the LLM classifier on a user message and return a GuardrailResult.
+
+    history — optional recent conversation turns (role/content dicts). When
+    provided, the last assistant message is injected as inline context so the
+    classifier can correctly interpret short follow-ups like "suggest some" or
+    "household chores?" as WELLNESS continuations rather than out-of-scope.
+    """
+    # Build the classify content: inline-inject last assistant turn for context
+    classify_content = message
+    if history:
+        last_assistant = next(
+            (m["content"] for m in reversed(history) if m.get("role") == "assistant"),
+            None,
+        )
+        if last_assistant:
+            snippet = last_assistant[:150].replace("\n", " ")
+            classify_content = (
+                f"[Finn's previous response was about: {snippet}...]\n\n"
+                f"User follow-up: {message}"
+            )
+
+    messages = [{"role": "user", "content": classify_content}]
+
     raw = await llm.complete(
         system=_CLASSIFIER_SYSTEM,
-        messages=[{"role": "user", "content": message}],
+        messages=messages,
         max_tokens=5,
     )
 
@@ -120,9 +154,10 @@ async def classify(message: str, llm: LLMAdapter) -> GuardrailResult:
     if category in _GUARDRAIL_RESPONSES:
         response = _GUARDRAIL_RESPONSES[category]
     else:
+        # For the dynamic OTHER response, include the original context message
         response = await llm.complete(
             system=_OTHER_SYSTEM,
-            messages=[{"role": "user", "content": message}],
+            messages=messages,
             max_tokens=128,
         )
 

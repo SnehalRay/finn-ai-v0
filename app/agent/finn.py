@@ -54,8 +54,9 @@ class FinnAgent:
                 sources_used=False,
             )
 
-        # 5. Guardrails — LLM classifier
-        guard: GuardrailResult = await classify(clean_message, self.llm)
+        # 5. Guardrails — LLM classifier with short history for follow-up context
+        guard_history = db.get_session_messages(session_id, limit=4)
+        guard: GuardrailResult = await classify(clean_message, self.llm, history=guard_history)
         if guard.should_block:
             db.save_message(session_id, Role.assistant, guard.response)
             return AgentResponse(
